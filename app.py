@@ -182,7 +182,7 @@ def salvar_sessao(dados):
 # Fixamos o modelo diretamente para garantir 100% de estabilidade.
 # Substitua a função encontrar_modelo() por esta:
 # E garanta que a variável seja definida assim:
-MODELO_NOME = models/gemini-2.5-flash
+MODELO_NOME = models/gemini-1.5-pro-002⁠
 
 def gerar_imagem_cliente_segura(prompt_bruto):
     try:
