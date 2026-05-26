@@ -185,7 +185,7 @@ def salvar_sessao(dados):
 # --- CONFIGURAÇÃO FIXA: GEMINI 2.0 FLASH ---
 # O Gemini 2.0 Flash é atualmente o estado da arte para aplicações 
 # de latência ultra-baixa com alta capacidade multimodal.
-MODELO_NOME = "models/gemini-2.0-flash"
+MODELO_NOME = "models/gemini-2.5-flash"
 
 # Se precisar de um raciocínio mais profundo (embora mais lento), 
 # você poderia alternar para: "models/gemini-2.0-pro"
