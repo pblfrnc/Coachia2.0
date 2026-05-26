@@ -209,6 +209,9 @@ def encontrar_modelo():
     except Exception as e:
         # Fallback de segurança em caso de falha na conexão
         return "models/gemini-1.5-flash"
+        
+        # Mantenha apenas a chamada da função
+MODELO_NOME = encontrar_modelo()
 
 def gerar_imagem_cliente_segura(prompt_bruto):
     try:
