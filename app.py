@@ -181,13 +181,8 @@ def salvar_sessao(dados):
 # O CULPADO DO ERRO "ROBOTICS-PREVIEW" FOI DELETADO.
 # Fixamos o modelo diretamente para garantir 100% de estabilidade.
 # Substitua a função encontrar_modelo() por esta:
-@st.cache_resource
-def encontrar_modelo():
-    """Força o uso do modelo estável para evitar erros de 404"""
-    return "models/gemini-1.5-flash"
-
 # E garanta que a variável seja definida assim:
-MODELO_NOME = models/gemini-1.5-flash
+MODELO_NOME = models/gemini-2.5-flash
 
 def gerar_imagem_cliente_segura(prompt_bruto):
     try:
