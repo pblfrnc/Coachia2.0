@@ -178,24 +178,9 @@ def salvar_sessao(dados):
     df = pd.concat([df, pd.DataFrame([dados])], ignore_index=True)
     df.to_excel(ARQUIVO_HISTORICO, index=False)
 
-@st.cache_resource
-def encontrar_modelo():
-    if not API_KEY: return None
-    try:
-        modelos_disponiveis = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        modelos_seguros = [
-            "models/gemini-1.5-flash", "models/gemini-1.5-flash-latest",
-            "models/gemini-1.5-flash-002", "models/gemini-1.5-pro", "models/gemini-pro"
-        ]
-        for modelo in modelos_seguros:
-            if modelo in modelos_disponiveis: return modelo
-        for m in modelos_disponiveis:
-            if "flash" in m and "preview" not in m and "robotics" not in m: return m
-        return "models/gemini-1.5-flash"
-    except: 
-        return "models/gemini-1.5-flash"
-
-MODELO_NOME = encontrar_modelo()
+# O CULPADO DO ERRO "ROBOTICS-PREVIEW" FOI DELETADO.
+# Fixamos o modelo diretamente para garantir 100% de estabilidade.
+MODELO_NOME = "gemini-1.5-flash"
 
 def gerar_imagem_cliente_segura(prompt_bruto):
     try:
@@ -212,9 +197,6 @@ def gerar_imagem_cliente_segura(prompt_bruto):
 def transcrever_audio_para_texto(audio_file):
     with st.spinner("🎧 Transcrevendo sua voz..."):
         try:
-            if not MODELO_NOME:
-                return "Erro: Nenhum modelo de IA encontrado."
-                
             mime_limpo = audio_file.type.split(';')[0] if audio_file.type else 'audio/wav'
             if mime_limpo == "audio/mp4" or mime_limpo == "audio/m4a":
                 mime_limpo = "audio/mp4"
@@ -234,7 +216,6 @@ def transcrever_audio_para_texto(audio_file):
 
 def gerar_audio_cliente(texto, genero="F"):
     try:
-        # ATUALIZAÇÃO IMPORTANTE NA SELEÇÃO DA VOZ COM BASE NO GÊNERO CORRETO!
         if genero == "M":
             voz = "pt-BR-AntonioNeural" # Masculino
         else:
@@ -293,8 +274,6 @@ st.markdown("<div class='titulo-central'>🏆 💊 Coach Suprabio 🧠</div>", u
 
 if not CONEXAO_OK:
     st.error("⚠️ Configure a API Key nos 'Secrets'!")
-elif not MODELO_NOME:
-    st.error("⚠️ Nenhum modelo de IA disponível na API Key.")
 
 col_esq, col_meio, col_dir = st.columns([1, 1, 1])
 with col_meio:
@@ -383,7 +362,6 @@ if colaborador != "Clique aqui para selecionar...":
                 imagem_bytes = gerar_imagem_cliente_segura(prompt_bruto)
                 st.session_state.imagem_cliente = imagem_bytes
                 
-                # CHAMA O ÁUDIO PASSANDO O GÊNERO CORRETO AGORA!
                 audio_bytes = gerar_audio_cliente(caso["queixa"], genero=genero_caso)
                 
                 st.session_state.historico_chat = [{"role": "Cliente", "text": caso["queixa"], "audio": audio_bytes}]
@@ -455,7 +433,6 @@ if colaborador != "Clique aqui para selecionar...":
                                     res_cliente = model.generate_content(prompt_cliente)
                                     texto_resposta_cliente = res_cliente.text.strip()
                                     
-                                    # CHAMA O ÁUDIO PASSANDO O GÊNERO CORRETO AQUI TAMBÉM!
                                     genero_caso = st.session_state.caso_atual.get("genero", "F")
                                     audio_bytes = gerar_audio_cliente(texto_resposta_cliente, genero=genero_caso)
                                     
