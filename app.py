@@ -12,6 +12,8 @@ import asyncio
 import edge_tts
 import requests
 import threading
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 
 # --- CONFIGURAÇÃO DA CHAVE DE API (SEGURA) ---
 try:
@@ -93,6 +95,9 @@ st.markdown("""
 ARQUIVO_HISTORICO = "historico_treinamento.xlsx"
 ARQUIVO_EQUIPE = "equipe.csv"
 
+# --- MODELO FIXO ---
+MODELO_NOME = "models/gemini-2.5-flash"
+
 BASE_RAG_SUPRABIO = """
 DOCUMENTO DE PRODUTOS SUPRABIO E OBJEÇÕES COMUNS:
 - Magnésio Dimalato: Excelente para energia, dores crônicas, fibromialgia e fadiga. Objeção comum: "Já tomo magnésio de farmácia barato". Resposta esperada: "O Dimalato tem absorção superior e não solta o intestino".
@@ -102,7 +107,23 @@ DOCUMENTO DE PRODUTOS SUPRABIO E OBJEÇÕES COMUNS:
 - Colágeno e Cálcio MDK: Foco estrutural e beleza. MDK direciona o cálcio para o osso (Vitamina K2). Objeção: "Cálcio dá pedra nos rins?". Resposta: "O MDK evita isso justamente por causa da vitamina K2".
 """
 
-# --- BANCO DE DADOS DE CASOS REAIS (BLINDADO COM GÊNERO E IDADE) ---
+PROMPT_METODO_CLAMED = """
+Aja como um gerente de treinamento da CLAMED. Avalie o atendimento do colaborador com base no "MÉTODO DE VENDAS: A PONTE".
+Critérios de Avaliação (Pontue de 0 a 10):
+1. ABORDE POSITIVAMENTE: Foi ágil? Demonstrou empatia e disposição desde o primeiro segundo?
+2. PESQUISE O CLIENTE: Fez perguntas para entender a necessidade e o perfil?
+3. DEMONSTRAÇÃO ENVOLVENTE: Apresentou a solução focando em benefícios? (O vendedor conhece o produto?)
+4. NEGOCIE E NEUTRALIZE OBJEÇÕES: Se houve objeção (ex: preço), usou empatia e técnica de argumentação sem confrontar?
+5. TOME A INICIATIVA (FECHAMENTO): Fechou a venda ativamente ou esperou o cliente decidir sozinho?
+6. ESTENDA O RELACIONAMENTO: Agradeceu, fidelizou e colocou-se à disposição?
+
+Além das etapas, avalie as 8 ATITUDES VENCEDORAS: Energia, foco em metas e não desistência da venda.
+SAÍDA OBRIGATÓRIA:
+NOTA_FINAL: [Nota de 0 a 10]
+FEEDBACK: [Feedback técnico detalhado apontando qual etapa da PONTE ele falhou ou brilhou, baseando-se no produto ofertado]
+"""
+
+# --- BANCO DE DADOS DE CASOS REAIS (OS 49 CASOS BLINDADOS COM GÊNERO E IDADE) ---
 CASOS_REAIS = [
     {"queixa": "Moça, eu ando muito esquecido, a cabeça parece que não funciona direito e tô sem energia mental.", "produto_alvo": "Magnésio Dimalato ou Complexo B", "prompt_img": "portrait of a stressed middle-aged brazilian man rubbing his temples looking confused", "genero": "M", "idade": "adulto"},
     {"queixa": "Minha memória tá terrível, esqueço onde coloquei a chave, o que ia falar... Queria algo pro cérebro e que fizesse bem pro coração.", "produto_alvo": "Ômega 3", "prompt_img": "portrait of an elderly brazilian woman looking forgetful and concerned", "genero": "F", "idade": "idoso"},
@@ -155,7 +176,7 @@ CASOS_REAIS = [
     {"queixa": "Trabalho como motorista de aplicativo, rodo o dia todo. A claridade do sol e farol à noite tão me incomodando demais.", "produto_alvo": "Luteína", "prompt_img": "portrait of a brazilian ride-share driver in a car squinting bothered by light", "genero": "M", "idade": "adulto"}
 ]
 
-# --- FUNÇÕES ---
+# --- FUNÇÕES BÁSICAS ---
 def carregar_equipe():
     if os.path.exists(ARQUIVO_EQUIPE):
         try: return pd.read_csv(ARQUIVO_EQUIPE)['Nome'].tolist()
@@ -178,18 +199,6 @@ def salvar_sessao(dados):
     df = pd.concat([df, pd.DataFrame([dados])], ignore_index=True)
     df.to_excel(ARQUIVO_HISTORICO, index=False)
 
-# O CULPADO DO ERRO "ROBOTICS-PREVIEW" FOI DELETADO.
-# Fixamos o modelo diretamente para garantir 100% de estabilidade.
-# Substitua a função encontrar_modelo() por esta:
-# E garanta que a variável seja definida assim:
-# --- CONFIGURAÇÃO FIXA: GEMINI 2.0 FLASH ---
-# O Gemini 2.0 Flash é atualmente o estado da arte para aplicações 
-# de latência ultra-baixa com alta capacidade multimodal.
-MODELO_NOME = "models/gemini-2.5-flash"
-
-# Se precisar de um raciocínio mais profundo (embora mais lento), 
-# você poderia alternar para: "models/gemini-2.0-pro"
-
 def gerar_imagem_cliente_segura(prompt_bruto):
     try:
         prompt_formatado = urllib.parse.quote(prompt_bruto + " looking at camera")
@@ -206,7 +215,7 @@ def transcrever_audio_para_texto(audio_file):
     with st.spinner("🎧 Transcrevendo sua voz..."):
         try:
             mime_limpo = audio_file.type.split(';')[0] if audio_file.type else 'audio/wav'
-            if mime_limpo == "audio/mp4" or mime_limpo == "audio/m4a":
+            if mime_limpo in ["audio/mp4", "audio/m4a"]:
                 mime_limpo = "audio/mp4"
 
             model = genai.GenerativeModel(MODELO_NOME)
@@ -464,27 +473,21 @@ if colaborador != "Clique aqui para selecionar...":
                     if not resposta_final:
                         st.warning("⚠️ Escreva sua resposta final ou valide sua gravação!")
                     else:
-                        with st.spinner("O Coach está analisando o atendimento..."):
+                        with st.spinner("O Gerente CLAMED está analisando o atendimento..."):
                             st.session_state.historico_chat.append({"role": "Vendedor", "text": resposta_final})
                             texto_conversa_final = "\n".join([f"{m['role']}: {m['text']}" for m in st.session_state.historico_chat])
                             
                             prompt_aval = f"""
                             {BASE_RAG_SUPRABIO}
                             
-                            Aja como um gerente técnico de farmácia rigoroso.
-                            CONVERSA:
+                            {PROMPT_METODO_CLAMED}
+                            
+                            CONVERSA DO ATENDIMENTO:
                             {texto_conversa_final}
                             
                             PRODUTO ALVO ESPERADO: {st.session_state.produto_alvo}
                             
-                            AVALIAÇÃO:
-                            1. O vendedor quebrou as objeções do cliente baseando-se no DOCUMENTO DE PRODUTOS? (Ex: Explicou que dimalato não solta intestino, ou que MDK tira o cálcio da artéria e põe no osso).
-                            2. Teve empatia no atendimento?
-                            3. Fez o fechamento da venda e indicou o {st.session_state.produto_alvo} corretamente?
-                            
-                            SAÍDA OBRIGATÓRIA:
-                            NOTA_FINAL: [Sua nota de 0 a 10. Seja duro. Desconte pontos se ele só leu o rótulo sem quebrar objeção]
-                            FEEDBACK: [Feedback prático avaliando o conjunto]
+                            Avalie rigorosamente se o vendedor aplicou as etapas d'A PONTE.
                             """
                             try:
                                 model = genai.GenerativeModel(MODELO_NOME)
@@ -496,7 +499,7 @@ if colaborador != "Clique aqui para selecionar...":
                             except Exception as e:
                                 st.error(f"Erro ao avaliar: {e}")
 
-        # 4. RESULTADO
+        # 4. RESULTADO E RELATÓRIO PDF
         if st.session_state.feedback:
             st.markdown("---")
             cor = "green" if st.session_state.nota >= 7 else "red"
@@ -504,9 +507,43 @@ if colaborador != "Clique aqui para selecionar...":
             with st.container(border=True):
                 st.info(st.session_state.feedback)
             
-            col_save, col_discard = st.columns(2)
+            # --- FUNÇÃO GERADORA DE PDF ---
+            def criar_pdf_relatorio():
+                buffer = io.BytesIO()
+                c = canvas.Canvas(buffer, pagesize=A4)
+                c.setFont("Helvetica-Bold", 16)
+                c.drawString(50, 800, "Relatorio de Desempenho - Metodo CLAMED (A PONTE)")
+                c.setFont("Helvetica", 12)
+                c.drawString(50, 780, f"Colaborador: {colaborador}")
+                c.drawString(50, 765, f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+                c.drawString(50, 750, f"Nota Final: {st.session_state.nota}/10")
+                c.drawString(50, 720, "Feedback Tecnico da IA:")
+                
+                text_object = c.beginText(50, 700)
+                text_object.setFont("Helvetica", 10)
+                
+                # Quebra de texto automático para o PDF
+                linhas = st.session_state.feedback.split('\n')
+                for line in linhas:
+                    palavras = line.split()
+                    linha_atual = ""
+                    for palavra in palavras:
+                        if c.stringWidth(linha_atual + palavra + " ", "Helvetica", 10) < 500:
+                            linha_atual += palavra + " "
+                        else:
+                            text_object.textLine(linha_atual)
+                            linha_atual = palavra + " "
+                    text_object.textLine(linha_atual)
+
+                c.drawText(text_object)
+                c.showPage()
+                c.save()
+                return buffer.getvalue()
+
+            col_save, col_pdf, col_discard = st.columns(3)
+            
             with col_save:
-                if st.button("💾 SALVAR TREINO", type="primary"):
+                if st.button("💾 SALVAR", type="primary"):
                     conversa_str = " | ".join([f"{m['role']}: {m['text']}" for m in st.session_state.historico_chat])
                     salvar_sessao({
                         "Data": datetime.now().strftime("%d/%m %H:%M"), 
@@ -516,12 +553,17 @@ if colaborador != "Clique aqui para selecionar...":
                         "Nota": st.session_state.nota, 
                         "FeedbackIA": st.session_state.feedback
                     })
-                    st.success("Salvo!")
-                    st.session_state.historico_chat = []
-                    st.session_state.feedback = ""
-                    st.session_state.imagem_cliente = None
-                    st.session_state.caso_atual = None
-                    st.rerun()
+                    st.success("Salvo com sucesso!")
+            
+            with col_pdf:
+                pdf_data = criar_pdf_relatorio()
+                st.download_button(
+                    label="📄 BAIXAR PDF",
+                    data=pdf_data,
+                    file_name=f"Avaliacao_{colaborador}_{datetime.now().strftime('%d%m')}.pdf",
+                    mime="application/pdf"
+                )
+
             with col_discard:
                 if st.button("🗑️ DESCARTAR"):
                     st.session_state.historico_chat = []
