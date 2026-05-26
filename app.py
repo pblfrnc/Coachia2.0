@@ -187,7 +187,7 @@ def encontrar_modelo():
     return "models/gemini-1.5-flash"
 
 # E garanta que a variável seja definida assim:
-MODELO_NOME = encontrar_modelo()
+MODELO_NOME = models/gemini-1.5-flash
 
 def gerar_imagem_cliente_segura(prompt_bruto):
     try:
