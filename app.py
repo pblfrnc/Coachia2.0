@@ -89,9 +89,19 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- ARQUIVOS ---
+# --- ARQUIVOS E RAG ---
 ARQUIVO_HISTORICO = "historico_treinamento.xlsx"
 ARQUIVO_EQUIPE = "equipe.csv"
+
+# [NOVO] BASE DE CONHECIMENTO RAG PARA A IA (Para interpretações avançadas)
+BASE_RAG_SUPRABIO = """
+DOCUMENTO DE PRODUTOS SUPRABIO E OBJEÇÕES COMUNS:
+- Magnésio Dimalato: Excelente para energia, dores crônicas, fibromialgia e fadiga. Objeção comum: "Já tomo magnésio de farmácia barato". Resposta esperada: "O Dimalato tem absorção superior e não solta o intestino".
+- Cloreto de Magnésio: Foco em articulações, bico de papagaio, lubrificação de juntas. Objeção comum: "Tem gosto ruim?". Resposta esperada: "Em cápsulas você não sente o sabor".
+- Melatonina e Clamvit Zen: Foco no sono e ansiedade. Melatonina induz o sono, Clamvit relaxa sem dopar. Objeção comum: "Vicia? Deixa de ressaca?". Resposta: "Totalmente natural, sem efeito ressaca".
+- Coenzima Q10: Saúde do coração, energia mitocondrial e para quem toma Estatinas. Objeção: "É muito caro". Resposta: "O custo-benefício para tirar a dor muscular da estatina é enorme".
+- Colágeno e Cálcio MDK: Foco estrutural e beleza. MDK direciona o cálcio para o osso (Vitamina K2). Objeção: "Cálcio dá pedra nos rins?". Resposta: "O MDK evita isso justamente por causa da vitamina K2".
+"""
 
 # --- BANCO DE DADOS DE CASOS REAIS (COM PERFIL DE IMAGEM) ---
 CASOS_REAIS = [
@@ -171,22 +181,24 @@ def salvar_sessao(dados):
 
 @st.cache_resource
 def encontrar_modelo():
-    """Força o uso do 1.5-flash para aproveitar a cota gratuita maior e evitar erro 429"""
+    """Busca dinâmica atualizada (2026): Prioriza 2.5 Flash, usa 2.0 ou 1.5 como fallback seguro."""
     if not API_KEY: return None
     try:
         modelos_disponiveis = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         if not modelos_disponiveis: return None
 
+        # Prioridade 1: O modelo 2.5 mais recente (Flash)
         for m in modelos_disponiveis:
-            if "1.5-flash" in m: return m
-        for m in modelos_disponiveis:
-            if "1.5" in m: return m
-        for m in modelos_disponiveis:
-            if "2.5" not in m: return m
+            if "2.5-flash" in m: return m
             
-        return modelos_disponiveis[0]
+        # Prioridade 2: O modelo 2.0 (se o 2.5 não tiver na cota)
+        for m in modelos_disponiveis:
+            if "2.0-flash" in m: return m
+            
+        # Fallback: Qualquer modelo mais recente (evitando depreciados)
+        return modelos_disponiveis[-1]
     except: 
-        return None
+        return "models/gemini-2.5-flash" # Fallback forte em caso de erro na lista
 
 MODELO_NOME = encontrar_modelo()
 
@@ -273,12 +285,13 @@ def gerar_audio_cliente(texto, prompt_imagem=""):
 if "equipe" not in st.session_state: st.session_state.equipe = carregar_equipe()
 if "historico_chat" not in st.session_state: st.session_state.historico_chat = []
 if "turno" not in st.session_state: st.session_state.turno = 1
+# [NOVO] Aumentado para 4 interações (turnos)
+MAX_TURNOS = 4
 if "produto_alvo" not in st.session_state: st.session_state.produto_alvo = ""
 if "nota" not in st.session_state: st.session_state.nota = 0.0
 if "feedback" not in st.session_state: st.session_state.feedback = ""
 if "imagem_cliente" not in st.session_state: st.session_state.imagem_cliente = None
 if "prompt_atual" not in st.session_state: st.session_state.prompt_atual = ""
-# NOVA MEMÓRIA: Lógica do "Baralho de Cartas" para evitar repetição
 if "casos_disponiveis" not in st.session_state: st.session_state.casos_disponiveis = CASOS_REAIS.copy()
 
 # ==========================================
@@ -328,14 +341,12 @@ df_rank = carregar_historico()
 if not df_rank.empty:
     st.markdown("<h4 style='text-align: center; color: #555;'>🔥 Top Vendedores (Média de Notas)</h4>", unsafe_allow_html=True)
     
-    # Calcula a média de notas e a quantidade de treinos por vendedor
     df_rank['Nota'] = pd.to_numeric(df_rank['Nota'], errors='coerce')
     resumo = df_rank.groupby("Colaborador").agg(
         Media=("Nota", "mean"),
         Treinos=("Nota", "count")
     ).reset_index().sort_values("Media", ascending=False)
     
-    # Monta o pódio com os top 3
     top_n = min(len(resumo), 3)
     cols = st.columns(top_n)
     
@@ -366,12 +377,9 @@ if colaborador != "Clique aqui para selecionar...":
     if not st.session_state.historico_chat:
         if st.button("🔔 CHAMAR PRÓXIMO CLIENTE", type="primary"):
             
-            # --- CORREÇÃO DE REPETIÇÃO: Lógica de Baralho ---
-            # Se a lista de disponíveis esvaziar, reinicia o baralho
             if not st.session_state.casos_disponiveis:
                 st.session_state.casos_disponiveis = CASOS_REAIS.copy()
             
-            # Escolhe um caso e o remove da lista para não repetir
             caso = random.choice(st.session_state.casos_disponiveis)
             st.session_state.casos_disponiveis.remove(caso)
             
@@ -409,14 +417,15 @@ if colaborador != "Clique aqui para selecionar...":
             with st.expander("🤫 Gabarito do Gerente (Não mostre ao colaborador)"):
                 st.write(f"**Indicação ideal esperada:** {st.session_state.produto_alvo}")
                 
-            st.write(f"*(Turno {st.session_state.turno} de 3)*")
+            st.write(f"*(Turno {st.session_state.turno} de {MAX_TURNOS})*")
             
             resposta_texto = st.text_area("✍️ Digite sua resposta ou grave um áudio abaixo:", height=80, key=f"input_{st.session_state.turno}")
             audio_val = st.audio_input("🎙️ Gravar resposta em áudio", key=f"audio_{st.session_state.turno}")
             
             col1, col2 = st.columns(2)
             with col1:
-                if st.session_state.turno < 3:
+                # [MODIFICADO] Lógica de 4 turnos
+                if st.session_state.turno < MAX_TURNOS:
                     if st.button("🗣️ RESPONDER E CONTINUAR"):
                         resposta_final = ""
                         if audio_val is not None:
@@ -430,15 +439,23 @@ if colaborador != "Clique aqui para selecionar...":
                             with st.spinner("Cliente ouvindo e pensando..."):
                                 st.session_state.historico_chat.append({"role": "Vendedor", "text": resposta_final})
                                 texto_conversa = "\n".join([f"{m['role']}: {m['text']}" for m in st.session_state.historico_chat])
+                                
+                                # [NOVO] PROMPT DO CLIENTE TURBINADO COM RAG E AVALIAÇÃO DE CONTEXTO
                                 prompt_cliente = f"""
-                                Atue como um cliente de farmácia. Sua queixa principal inicial era a falta de: {st.session_state.produto_alvo}.
+                                {BASE_RAG_SUPRABIO}
+                                
+                                Atue como um cliente de farmácia brasileiro.
+                                Sua queixa principal inicial era a falta de: {st.session_state.produto_alvo}.
+                                
                                 Histórico da conversa:
                                 {texto_conversa}
-                                Responda à última fala do Vendedor. 
+                                
+                                Aja naturalmente. Use as informações do "DOCUMENTO DE PRODUTOS SUPRABIO" para criar objeções realistas se o vendedor recomendar o produto.
+                                Exemplo: Se o vendedor falar o nome do produto, pergunte sobre o preço ou se não vai fazer mal pro estômago.
                                 Regras:
-                                1. Seja curto (1 a 2 frases).
-                                2. Seja natural e direto. Sem aspas.
-                                3. Traga uma objeção clássica (ex: achar caro, perguntar se demora a fazer efeito, dizer que tem pressa).
+                                1. Seja curto (1 a 2 frases). Sem aspas.
+                                2. Se o vendedor ainda não indicou o produto, apenas dê mais detalhes da sua dor.
+                                3. Se o vendedor já indicou, traga uma objeção clássica baseada no documento RAG.
                                 """
                                 try:
                                     model = genai.GenerativeModel(MODELO_NOME)
@@ -455,7 +472,7 @@ if colaborador != "Clique aqui para selecionar...":
                     st.info("Limite de perguntas atingido. Finalize a venda.")
 
             with col2:
-                btn_tipo = "primary" if st.session_state.turno == 3 else "secondary"
+                btn_tipo = "primary" if st.session_state.turno == MAX_TURNOS else "secondary"
                 if st.button("✅ FINALIZAR E AVALIAR", type=btn_tipo):
                     resposta_final = ""
                     if audio_val is not None:
@@ -469,17 +486,24 @@ if colaborador != "Clique aqui para selecionar...":
                         with st.spinner("O Coach está analisando o atendimento..."):
                             st.session_state.historico_chat.append({"role": "Vendedor", "text": resposta_final})
                             texto_conversa_final = "\n".join([f"{m['role']}: {m['text']}" for m in st.session_state.historico_chat])
+                            
+                            # [NOVO] PROMPT DO AVALIADOR TURBINADO COM RAG
                             prompt_aval = f"""
-                            Aja como um gerente técnico de farmácia e coach de vendas.
+                            {BASE_RAG_SUPRABIO}
+                            
+                            Aja como um gerente técnico de farmácia rigoroso.
                             CONVERSA:
                             {texto_conversa_final}
+                            
                             PRODUTO ALVO ESPERADO: {st.session_state.produto_alvo}
+                            
                             AVALIAÇÃO:
-                            1. Sondagem e contorno de objeções.
-                            2. Empatia.
-                            3. Indicou {st.session_state.produto_alvo} focando no BENEFÍCIO?
+                            1. O vendedor quebrou as objeções do cliente baseando-se no DOCUMENTO DE PRODUTOS? (Ex: Explicou que dimalato não solta intestino, ou que MDK tira o cálcio da artéria e põe no osso).
+                            2. Teve empatia no atendimento?
+                            3. Fez o fechamento da venda e indicou o {st.session_state.produto_alvo} corretamente?
+                            
                             SAÍDA OBRIGATÓRIA:
-                            NOTA_FINAL: [Sua nota de 0 a 10]
+                            NOTA_FINAL: [Sua nota de 0 a 10. Seja duro. Desconte pontos se ele só leu o rótulo sem quebrar objeção]
                             FEEDBACK: [Feedback prático avaliando o conjunto]
                             """
                             try:
